@@ -160,3 +160,15 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+old versions/main7.py
+old versions/main6.py
+old versions/main5 cluster with key.py
+old versions/main4 cluster with key copy.py
+old versions/main3 cluster.py
+old versions/main2.py
+old versions/main.py
+old versions/main bid with date range.py
+old versions/main bid emails.py
+old versions/main bid emails with email link.py
+old versions/main bid emails with body.py
+BidEmails_FirstTimeInstallV2.bat
