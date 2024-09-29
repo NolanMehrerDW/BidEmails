@@ -14,7 +14,7 @@ date_patterns = [
 
 # Try to load the pre-trained model if it exists, otherwise start with a blank model
 try:
-    nlp = spacy.load("trained_ner_model")  # Load the previously trained model
+    nlp = spacy.load("BidEmails/trained_ner_model")  # Load the previously trained model
     print("Loaded existing model.")
 except:
     nlp = spacy.blank("en")  # Start with a blank model if no model exists
@@ -198,7 +198,7 @@ if TRAIN_DATA:
         print(f"Iteration {iteration}, Losses: {losses}")
 
     # Save the updated model to disk
-    nlp.to_disk("trained_ner_model")
+    nlp.to_disk("BidEmails/trained_ner_model")
     print("Model training completed and saved to disk!")
 else:
     print("No training data was generated.")
