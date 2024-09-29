@@ -13,7 +13,7 @@ date_patterns = [
 ]
 
 # Load the trained NER model
-nlp = spacy.load("BidEmails/trained_ner_model")
+nlp = spacy.load("./trained_ner_model")
 print("Loaded NER Model...")
 
 # Connect to Outlook and get the namespace
