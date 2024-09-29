@@ -14,7 +14,7 @@ date_patterns = [
 
 # Load the trained NER model
 nlp = spacy.load("trained_ner_model")
-print("NER Model Loaded...")
+print("Loaded NER Model...")
 
 # Connect to Outlook and get the namespace
 outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")

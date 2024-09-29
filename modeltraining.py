@@ -97,9 +97,8 @@ def format_date_to_mmddyyyy(date_str):
     return date_obj.strftime("%m/%d/%Y")
 
 # Function to manually prompt for entity information from the user, showing model's predictions
-def prompt_for_labels(subject, email_body):
-    combined_text = f"Subject: {subject}\n\nBody:\n{email_body}"
-    print("\nCombined Subject and Email Body:\n", combined_text)
+def prompt_for_labels(email_body):
+    print("\nEmail Body:\n", email_body)
 
     # Ask if the email is relevant
     relevant = input("Is this email relevant? (y/n): ").strip().lower()
@@ -107,7 +106,7 @@ def prompt_for_labels(subject, email_body):
         return None  # Disregard this email
 
     # Get the model's predictions for this email
-    model_project_name, model_contractor, model_bid_due_date = get_model_predictions(combined_text)
+    model_project_name, model_contractor, model_bid_due_date = get_model_predictions(email_body)
     
     # Display model's predictions and allow user to confirm or correct
     print(f"\nModel's Prediction - Project Name: {model_project_name}")
@@ -129,20 +128,20 @@ def prompt_for_labels(subject, email_body):
     if bid_due_date is not None:
         bid_due_date = format_date_to_mmddyyyy(bid_due_date)
 
-    # Identify entity positions in the combined text for annotation
+    # Identify entity positions in the email body for annotation
     entities = []
     if project_name:
-        start_idx = combined_text.lower().find(project_name.lower())
+        start_idx = email_body.lower().find(project_name.lower())
         if start_idx != -1:
             entities.append((start_idx, start_idx + len(project_name), "PROJECT_NAME"))
 
     if contractor:
-        start_idx = combined_text.lower().find(contractor.lower())
+        start_idx = email_body.lower().find(contractor.lower())
         if start_idx != -1:
             entities.append((start_idx, start_idx + len(contractor), "CONTRACTOR"))
 
     if bid_due_date:
-        start_idx = combined_text.lower().find(bid_due_date.lower())
+        start_idx = email_body.lower().find(bid_due_date.lower())
         if start_idx != -1:
             entities.append((start_idx, start_idx + len(bid_due_date), "BID_DUE_DATE"))
 
@@ -177,8 +176,7 @@ if message_count > 0:
     for i in random_indices:
         message = messages[i]  # Access each random message
         email_body = message.Body
-        subject = message.Subject
-        entities = prompt_for_labels(subject, email_body)
+        entities = prompt_for_labels(email_body)
 
         if entities:
             TRAIN_DATA.append((email_body, {"entities": entities}))
