@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import random
 from fuzzywuzzy import fuzz
+from dateutil import parser
 
 # Date regex patterns for "Month DD, YYYY" and "MM/DD/YYYY"
 date_patterns = [
@@ -42,13 +43,20 @@ def extract_dates_with_regex(email_body):
             return match.group()
     return None  # No date found
 
+def validate_date(entity):
+    try:
+        parsed_date = parser.parse(entity, fuzzy=False)
+        return True  # If date is valid
+    except ValueError:
+        return False  # If not a valid date
+
 # Function to get model predictions for project name, contractor, and bid due date
 def get_model_predictions(email_body):
     doc = nlp(email_body)
     project_name = None
     contractor = None
     bid_due_date = None
-    
+
     # Extract the model's predictions for each entity
     for ent in doc.ents:
         if ent.label_ == "PROJECT_NAME":
@@ -56,12 +64,16 @@ def get_model_predictions(email_body):
         elif ent.label_ == "CONTRACTOR":
             contractor = ent.text
         elif ent.label_ == "BID_DUE_DATE":
-            bid_due_date = ent.text
-    
+            # Validate if it's a real date
+            if validate_date(ent.text):
+                bid_due_date = ent.text
+
     # Use regex as a fallback if the model doesn't extract the bid due date
     if not bid_due_date:
         bid_due_date = extract_dates_with_regex(email_body)
-    
+        if bid_due_date:
+            bid_due_date += "?"  # Affix '?' to indicate it was found via regex
+
     return project_name, contractor, bid_due_date
 
 # Function to assign an orange category to an email
@@ -79,7 +91,7 @@ def backup_project_name_from_subject(subject, known_project_names):
     for project_name in known_project_names:
         # Use fuzzy matching to compare the subject with known project names
         if fuzz.partial_ratio(subject.lower(), project_name.lower()) > 60:  # Adjust threshold if needed, 80 was default
-            return f"*{project_name}"
+            return f"**{project_name}"
     return None
 
 # Function to pass subject line to the model as a last resort
@@ -151,7 +163,7 @@ for message in messages:
 
         # Final Backup: If still no project name, use the model on the subject line
         if not project_name:
-            project_name = extract_project_name_from_subject(subject)
+            project_name = f"&{extract_project_name_from_subject(subject)}"
 
         # Add the project name to the known list if extracted successfully
         if project_name:
