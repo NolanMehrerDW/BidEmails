@@ -6,7 +6,7 @@ from spacy.training import Example
 from spacy.util import minibatch
 import random
 
-# Date regex patterns for "Month DD, YYYY" and "MM/DD/YYYY"
+# Date regex patterns for "Month DD, YYYY" and "MM/DD/YYYY" (used during inference as fallback)
 date_patterns = [
     r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2}, \d{4}\b",  # "Month DD, YYYY"
     r"\b\d{1,2}/\d{1,2}/\d{4}\b"  # "MM/DD/YYYY"
@@ -14,7 +14,7 @@ date_patterns = [
 
 # Try to load the pre-trained model if it exists, otherwise start with a blank model
 try:
-    nlp = spacy.load("BidEmails/trained_ner_model")  # Load the previously trained model
+    nlp = spacy.load("./trained_ner_model")  # Load the previously trained model
     print("Loaded existing model.")
 except:
     nlp = spacy.blank("en")  # Start with a blank model if no model exists
@@ -84,35 +84,6 @@ def find_bid_folders(folder, folder_path=""):
         bid_folders.extend(find_bid_folders(subfolder, folder_path))
     
     return bid_folders
-
-# Function to extract dates using regex patterns
-def extract_dates_with_regex(text):
-    for pattern in date_patterns:
-        match = re.search(pattern, text)
-        if match:
-            return match.group()
-    return None  # No date found
-
-# Pre-annotation function using regex to find project names, contractors, and dates
-def pre_annotate(text):
-    entities = []
-
-    # Pre-label dates using regex
-    date_matches = re.finditer(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2}, \d{4}\b", text)
-    for match in date_matches:
-        entities.append((match.start(), match.end(), 'BID_DUE_DATE'))
-    
-    # Pre-label project names (based on pattern recognition)
-    project_matches = re.finditer(r'Project: (.+)', text)
-    for match in project_matches:
-        entities.append((match.start(1), match.end(1), 'PROJECT_NAME'))
-
-    # Pre-label contractors (based on pattern recognition)
-    contractor_matches = re.finditer(r'Contractor: (.+)', text)
-    for match in contractor_matches:
-        entities.append((match.start(1), match.end(1), 'CONTRACTOR'))
-
-    return entities
 
 # Function to manually prompt for entity information from the user, showing model's predictions
 def prompt_for_labels(email_body):
@@ -185,7 +156,7 @@ else:
     print("No folders with 'Bid' in the name were found.")
     messages = []
 
-# Collect training data by pre-annotating with regex and prompting for corrections when needed
+# Collect training data by using model predictions and prompting for corrections when needed
 TRAIN_DATA = []
 message_count = len(messages)
 if message_count > 0:
@@ -195,15 +166,10 @@ if message_count > 0:
         message = messages[i]  # Access each random message
         email_body = message.Body
 
-        # Pre-annotate the entities
-        entities = pre_annotate(email_body)
+        # Get the model's predictions for this email
+        entities = prompt_for_labels(email_body)  # Allow corrections if requested
 
         if entities:
-            print(f"\nPre-annotated Entities: {entities}")
-            user_review = input("Would you like to review and correct? (y/n): ").strip().lower()
-            if user_review == 'y':
-                entities = prompt_for_labels(email_body)  # Allow corrections if requested
-
             TRAIN_DATA.append((email_body, {"entities": entities}))
 
 # Begin training if training data exists
@@ -223,7 +189,7 @@ if TRAIN_DATA:
         print(f"Iteration {iteration}, Losses: {losses}")
 
     # Save the updated model to disk
-    nlp.to_disk("BidEmails/trained_ner_model")
+    nlp.to_disk("./trained_ner_model")
     print("Model training completed and saved to disk!")
 else:
     print("No training data was generated.")
