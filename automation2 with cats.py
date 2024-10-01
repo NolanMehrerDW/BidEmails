@@ -90,7 +90,7 @@ def assign_orange_category(message):
 def backup_project_name_from_subject(subject, known_project_names):
     for project_name in known_project_names:
         # Use fuzzy matching to compare the subject with known project names
-        if fuzz.partial_ratio(subject.lower(), project_name.lower()) > 60:  # Adjust threshold if needed, 80 was default
+        if fuzz.partial_ratio(subject.lower(), project_name.lower()) > 45:  # Adjust threshold if needed, 80 was default
             return f"**{project_name}"
     return None
 
