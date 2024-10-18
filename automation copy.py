@@ -3,9 +3,12 @@ import win32com.client
 import pandas as pd
 from datetime import datetime
 from dateutil import parser
-import random
-import torch.utils._pytree as pytree
-import torch
+
+# Date regex patterns for "Month DD, YYYY" and "MM/DD/YYYY"
+date_patterns = [
+    r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2}, \d{4}\b",  # "Month DD, YYYY"
+    r"\b\d{1,2}/\d{1,2}/\d{4}\b"  # "MM/DD/YYYY"
+]
 
 # Try to load the Transformer-based NER model or create a new one
 try:
@@ -22,16 +25,12 @@ else:
     ner = nlp.get_pipe("ner")
 
 # Add custom labels if not already present
-labels = ["PROJECT_NAME", "CONTRACTOR", "BID_DUE_DATE"]
-for label in labels:
-    if label not in ner.labels:
-        ner.add_label(label)
+ner.add_label("PROJECT_NAME")
+ner.add_label("CONTRACTOR")
+ner.add_label("BID_DUE_DATE")
 
 # **Initialize the NER model**
-try:
-    nlp.initialize()  # Make sure to call initialize() here
-except Exception as e:
-    print(f"Failed to initialize the model: {e}")
+nlp.initialize()  # Make sure to call initialize() here
 
 # Connect to Outlook
 outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
@@ -84,9 +83,8 @@ def get_confidence(entity):
     return entity.kb_id_ if entity.kb_id_ else 0.0
 
 # Active learning workflow for low-confidence predictions (Verbose Training Mode)
-def active_learning_correction(entity_type, prediction, message):
+def active_learning_correction(entity_type, prediction):
     print(f"Low-confidence prediction for {entity_type}: '{prediction}'")
-    message.Display()  # Opens the email in Outlook for easier review
     corrected_value = input(f"Please confirm or correct the {entity_type} (press Enter to confirm '{prediction}'): ")
     return corrected_value if corrected_value else prediction
 
@@ -148,11 +146,11 @@ for message in messages:
         # Active learning: Check predictions in verbose training mode
         if verbose_training_mode:
             if not project_name:
-                project_name = active_learning_correction("Project Name", project_name, message)
+                project_name = active_learning_correction("Project Name", project_name)
             if not contractor:
-                contractor = active_learning_correction("Contractor", contractor, message)
+                contractor = active_learning_correction("Contractor", contractor)
             if not bid_due_date:
-                bid_due_date = active_learning_correction("Bid Due Date", bid_due_date, message)
+                bid_due_date = active_learning_correction("Bid Due Date", bid_due_date)
 
         # Add the project name to the known list if extracted successfully
         if project_name:
@@ -191,32 +189,3 @@ print(f"Data saved to {output_file}")
 if verbose_training_mode:
     nlp.to_disk("./trained_ner_model")
     print("Model training completed and saved to disk after corrections.")
-
-# **Deprecation Warning Updates**
-# Update deprecated calls
-pytree.register_pytree_node = getattr(pytree, 'register_pytree_node', pytree._register_pytree_node)
-print("Using updated register_pytree_node method.")
-
-# Set torch load with weights_only=True to avoid potential security issues
-def load_weights_safe(filelike, map_location):
-    return torch.load(filelike, map_location=map_location, weights_only=True)
-
-# Update torch.amp.autocast to the new format
-def autocast(device, *args, **kwargs):
-    return torch.amp.autocast(device, *args, **kwargs)
-print("Updated deprecated torch.cuda.amp.autocast to torch.amp.autocast.")
-
-# Warning fixes for AttributeRuler and Lemmatizer
-from spacy.pipeline import AttributeRuler, Lemmatizer
-
-if "attribute_ruler" not in nlp.pipe_names:
-    attribute_ruler = nlp.add_pipe("attribute_ruler")
-else:
-    attribute_ruler = nlp.get_pipe("attribute_ruler")
-
-if "lemmatizer" not in nlp.pipe_names:
-    lemmatizer = nlp.add_pipe("lemmatizer", after="attribute_ruler")
-else:
-    lemmatizer = nlp.get_pipe("lemmatizer")
-
-print("Initialized AttributeRuler and Lemmatizer to resolve warnings.")

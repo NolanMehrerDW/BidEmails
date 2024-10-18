@@ -4,29 +4,18 @@ import win32com.client
 import random
 from spacy.training import Example
 from spacy.util import minibatch
-import torch.utils._pytree as pytree
-import torch
 
 # Load the Transformer-based model or the trained custom model
 try:
     nlp = spacy.load("./trained_ner_model")  # Load the previously trained model if it exists
     print("Loaded existing trained NER model.")
-except Exception as e:
-    print(f"Failed to load trained NER model: {e}")
+except:
     try:
         nlp = spacy.load("en_core_web_trf")  # Load Transformer-based model as a fallback
         print("Loaded Transformer-based NER Model.")
-    except Exception as e:
-        print(f"Failed to load Transformer-based model: {e}")
+    except:
         nlp = spacy.blank("en")  # Start with a blank model if no model exists
         print("No existing model found, starting fresh.")
-        # Add the NER pipeline to the blank model
-        ner = nlp.add_pipe("ner")
-        # Add custom labels to the NER model
-        labels = ["PROJECT_NAME", "CONTRACTOR", "BID_DUE_DATE"]
-        for label in labels:
-            ner.add_label(label)
-        nlp.initialize()  # Only initialize if starting fresh
 
 # Add the NER pipeline if it doesn't exist
 if "ner" not in nlp.pipe_names:
@@ -39,6 +28,9 @@ labels = ["PROJECT_NAME", "CONTRACTOR", "BID_DUE_DATE"]
 for label in labels:
     if label not in ner.labels:
         ner.add_label(label)
+
+# **Initialize the NER model**
+nlp.initialize()  # Make sure to call initialize() here
 
 # Connect to Outlook and get the namespace
 outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
@@ -178,32 +170,3 @@ if TRAIN_DATA:
     print("Model training completed and saved to disk!")
 else:
     print("No training data was generated.")
-
-# **Deprecation Warning Updates**
-# Update deprecated calls
-pytree.register_pytree_node = getattr(pytree, 'register_pytree_node', pytree._register_pytree_node)
-print("Using updated register_pytree_node method.")
-
-# Set torch load with weights_only=True to avoid potential security issues
-def load_weights_safe(filelike, map_location):
-    return torch.load(filelike, map_location=map_location, weights_only=True)
-
-# Update torch.amp.autocast to the new format
-def autocast(device, *args, **kwargs):
-    return torch.amp.autocast(device, *args, **kwargs)
-print("Updated deprecated torch.cuda.amp.autocast to torch.amp.autocast.")
-
-# Warning fixes for AttributeRuler and Lemmatizer
-from spacy.pipeline import AttributeRuler, Lemmatizer
-
-if "attribute_ruler" not in nlp.pipe_names:
-    attribute_ruler = nlp.add_pipe("attribute_ruler")
-else:
-    attribute_ruler = nlp.get_pipe("attribute_ruler")
-
-if "lemmatizer" not in nlp.pipe_names:
-    lemmatizer = nlp.add_pipe("lemmatizer", after="attribute_ruler")
-else:
-    lemmatizer = nlp.get_pipe("lemmatizer")
-
-print("Initialized AttributeRuler and Lemmatizer to resolve warnings.")
