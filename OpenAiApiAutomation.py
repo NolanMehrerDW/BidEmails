@@ -1,50 +1,80 @@
 import openai
-import win32com.client
 import pandas as pd
 from datetime import datetime
+import os
+import win32com.client
 from dateutil import parser
-import re
+import logging
+import json
 
-# Set up OpenAI API key
-openai.api_key = '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'
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Function to extract information using OpenAI's API
-def extract_info_with_gpt(email_text):
-    prompt = f"""Extract the following information from the email:
-    - Project Name
-    - Contractor
-    - Bid Due Date
+# Load the OpenAI API key from a config file
+with open("api_key.txt", "r") as file:
+    openai.api_key = file.read().strip()
 
-    Email: {email_text}
-    """
-    
-    response = openai.ChatCompletion.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are an assistant that extracts information from emails."},
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=200,
-        temperature=0.3
-    )
-    
-    extracted_text = response['choices'][0]['message']['content'].strip()
-    return parse_extracted_text(extracted_text)
+# Load corrections from a JSON file
+def load_corrections():
+    try:
+        with open("corrections.json", "r") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return {}
 
-# Function to parse extracted text into structured data
-def parse_extracted_text(extracted_text):
-    lines = extracted_text.split('\n')
-    data = {"Project Name": None, "Contractor": None, "Bid Due Date": None}
-    for line in lines:
-        if "Project Name:" in line:
-            data["Project Name"] = line.split(":", 1)[1].strip()
-        elif "Contractor:" in line:
-            data["Contractor"] = line.split(":", 1)[1].strip()
-        elif "Bid Due Date:" in line:
-            data["Bid Due Date"] = line.split(":", 1)[1].strip()
-    return data
+# Save corrections to a JSON file
+def save_corrections(corrections):
+    with open("corrections.json", "w") as file:
+        json.dump(corrections, file, indent=4)
+
+# Load existing corrections
+corrections = load_corrections()
+
+# Function to connect to the OpenAI API and extract relevant information from email content
+def extract_email_info(subject, body):
+    try:
+        logging.info("Extracting information from email with subject: %s", subject)
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an assistant extracting project information from emails."},
+                {"role": "user", "content": f"Extract the project name, contractor, and bid due date from the following email:\n\nEmail Example:\nSubject: {subject}\nBody: {body}\n\nThe format of the response should be:\nProject Name: ...\nContractor: ...\nBid Due Date: ..."}
+            ],
+            max_tokens=300,
+            temperature=0.2
+        )
+
+        content = response.choices[0].message['content']
+        lines = content.split('\n')
+        project_name, contractor, bid_due_date = None, None, None
+
+        # Extract the relevant fields from the response
+        for line in lines:
+            if line.startswith("Project Name:"):
+                project_name = line.replace("Project Name:", "").strip()
+            elif line.startswith("Contractor:"):
+                contractor = line.replace("Contractor:", "").strip()
+            elif line.startswith("Bid Due Date:"):
+                bid_due_date = line.replace("Bid Due Date:", "").strip()
+
+        logging.info("Extracted - Project Name: %s, Contractor: %s, Bid Due Date: %s", project_name, contractor, bid_due_date)
+        return project_name, contractor, bid_due_date
+
+    except Exception as e:
+        logging.error(f"Failed to process email: {e}")
+        return None, None, None
+
+# Function to normalize dates to mm/dd/yy format
+def normalize_date(date_str):
+    try:
+        parsed_date = parser.parse(date_str, fuzzy=True)
+        return parsed_date.strftime("%m/%d/%y")
+    except Exception as e:
+        logging.warning("Failed to parse date '%s': %s", date_str, e)
+        return "01/01/11**"
 
 # Connect to Outlook and get the namespace
+logging.info("Connecting to Outlook...")
 outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
 
 # Function to recursively find folders containing the keyword "Bid"
@@ -62,18 +92,6 @@ def find_bid_folders(folder, folder_path=""):
     
     return bid_folders
 
-# Assign Orange Category to email in Outlook
-def assign_orange_category(message):
-    try:
-        message.Categories = "Orange Category"
-        message.Save()  # Save the email after changing the category
-        print("Category set to Orange for email:", message.Subject)
-    except Exception as e:
-        print(f"Failed to set category for email: {message.Subject}. Error: {e}")
-
-# Prompt user to enable Verbose Training Mode
-verbose_training_mode = input("Would you like to enable Verbose Training Mode? (y/n): ").strip().lower() == 'y'
-
 # Get emails from a selected folder
 bid_folders = []
 for folder in outlook.Folders:
@@ -89,93 +107,112 @@ if bid_folders:
 
     # Retrieve emails from the selected folder
     messages = selected_folder.Items
-    print(f"Total emails in the selected folder: {len(messages)}")
+    logging.info("Total emails in the selected folder: %d", len(messages))
 
     # Ask for the number of most recent emails to process
     num_emails = int(input("How many recent emails would you like to process?: "))
     filtered_messages = [messages[i] for i in range(min(num_emails, len(messages)))]
     messages = filtered_messages
 
-    print(f"Processing {len(messages)} emails after filtering.")
+    logging.info("Processing %d emails after filtering.", len(messages))
 
 else:
-    print("No folders with 'Bid' in the name were found.")
+    logging.warning("No folders with 'Bid' in the name were found.")
     messages = []
 
-# Collect email data for output
+# Collect extracted data
 email_data = []
-projects = {}  # Dictionary to store projects and their details
-
 for message in messages:
     try:
-        body = message.Body
+        logging.info("Processing email with subject: %s", message.Subject)
         subject = message.Subject
+        body = message.Body
+        project_name, contractor, bid_due_date = extract_email_info(subject, body)
 
-        # Combine subject and body for model predictions
-        combined_text = f"{subject}\n{body}"
+        # Normalize bid due date
+        bid_due_date = normalize_date(bid_due_date) if bid_due_date else "01/01/11**"
 
-        # AI/ML-based extraction of relevant information
-        info = extract_info_with_gpt(combined_text)
-        project_name = info["Project Name"]
-        contractor = info["Contractor"]
-        bid_due_date = info["Bid Due Date"] or "01/01/11"  # Default to 01/01/11 if no date is found
+        # Apply corrections if available
+        if project_name in corrections:
+            corrected_info = corrections[project_name]
+            contractor = corrected_info.get("Contractor", contractor)
+            bid_due_date = corrected_info.get("Bid Due Date", bid_due_date)
 
-        # Standardize project names by removing trade details after a colon or dash
-        project_name = re.split(r'[:\-]', project_name)[0].strip() if project_name else None
-
-        # Active learning: Check predictions in verbose training mode
-        if verbose_training_mode:
-            if not project_name:
-                project_name = input(f"Low-confidence prediction for Project Name: '{project_name}'. Please correct or press Enter to confirm: ") or project_name
-            if not contractor:
-                contractor = input(f"Low-confidence prediction for Contractor: '{contractor}'. Please correct or press Enter to confirm: ") or contractor
-            if bid_due_date == "01/01/11":
-                bid_due_date = input(f"Low-confidence prediction for Bid Due Date: '{bid_due_date}'. Please correct or press Enter to confirm: ") or bid_due_date
-
-        # Add the data to the projects dictionary
-        if project_name:
-            if project_name not in projects:
-                projects[project_name] = {}
-            if contractor and contractor not in projects[project_name]:
-                projects[project_name][contractor] = bid_due_date
-
-        # Assign an orange category to the email after processing
-        assign_orange_category(message)
-        
+        # Add extracted information to email data list
+        email_data.append({
+            "Project Name": project_name,
+            "Contractor": contractor,
+            "Bid Due Date": bid_due_date if bid_due_date != "Not specified" else ""
+        })
     except Exception as e:
-        print(f"Failed to process email: {e}")
+        logging.error("Failed to process email with subject '%s': %s", message.Subject, e)
 
-# Prepare the final DataFrame by organizing projects
-final_data = []
-for project_name, contractors in projects.items():
-    contractor_list = ', '.join(set(contractors.keys()))  # Remove redundant contractor names
-    bid_dates = list(set(contractors.values()))
-    bid_dates = [parser.parse(d, fuzzy=True) if d != "01/01/11" else datetime(2011, 1, 1) for d in bid_dates]
-    bid_dates = [d if isinstance(d, datetime) else datetime(2011, 1, 1) for d in bid_dates]  # Handle unparsable dates
-    bid_dates = sorted(bid_dates)
-    soonest_bid_date = bid_dates[0] if bid_dates else datetime(2011, 1, 1)
-    final_data.append({
-        "Project Name": f"{project_name}**",  # Move marker to the end of the project name
-        "Contractors": contractor_list,
-        "Soonest Bid Due Date": soonest_bid_date.strftime("%m/%d/%Y"),
-        "Number of Contractors": len(contractors)
+# Convert to DataFrame
+email_df = pd.DataFrame(email_data)
+email_df["Contractor"] = email_df["Contractor"].apply(lambda x: x if x else "Not specified")
+
+# Consolidate identical projects and list unique contractors
+consolidated_data = (
+    email_df.groupby("Project Name", as_index=False)
+    .agg({
+        "Bid Due Date": "first",
+        "Contractor": lambda x: ", ".join(sorted(set(filter(None, [c.strip() for c in x]))))
     })
+)
 
-# Sort by Soonest Bid Due Date
-final_data = sorted(final_data, key=lambda x: parser.parse(x["Soonest Bid Due Date"], fuzzy=True) if x["Soonest Bid Due Date"] else datetime(2011, 1, 1))
+# Function to manually review potential project duplicates
+def manual_feedback(consolidated_df):
+    reviewed_projects = []
+    for idx, row in consolidated_df.iterrows():
+        potential_duplicates = consolidated_df[consolidated_df["Project Name"].str.contains(row["Project Name"], case=False, na=False)]
+        if len(potential_duplicates) > 1:
+            print(f"Potential duplicates found for project: {row['Project Name']}")
+            for _, duplicate in potential_duplicates.iterrows():
+                print(f"- {duplicate['Project Name']}")
+            keep = input("Which project name would you like to keep? (Leave blank to keep the original): ")
+            if keep:
+                row["Project Name"] = keep
+                corrections[row["Project Name"]] = {"Contractor": row["Contractor"], "Bid Due Date": row["Bid Due Date"]}
+        reviewed_projects.append(row)
+    save_corrections(corrections)
+    return pd.DataFrame(reviewed_projects)
 
-# Convert the final data into a DataFrame
-df = pd.DataFrame(final_data)
+# Apply manual feedback for duplicate consolidation
+consolidated_data = manual_feedback(consolidated_data)
 
-# Highlight rows with bid due date as "01/01/11"
-def highlight_missing_dates(row):
-    return ['background-color: orange' if row['Soonest Bid Due Date'] == '01/01/11' else '' for _ in row]
+# SharePoint Integration - Save to existing SharePoint Excel file
+from office365.runtime.auth.authentication_context import AuthenticationContext
+from office365.sharepoint.client_context import ClientContext
+from office365.sharepoint.files.file import File
 
-styled_df = df.style.apply(highlight_missing_dates, axis=1)
+sharepoint_url = "https://mehrer.sharepoint.com/sites/MehrerDrywallOffice"
+relative_url = "/sites/MehrerDrywallOffice/Shared Documents/Bid Calendar.xlsx"
+username = "Nolan@mehrer.com"
+password = "Nus74203"
 
-# Save the updated data to an Excel file
-output_file = 'bid_requests_calendar_new.xlsx'
-with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-    styled_df.to_excel(writer, sheet_name='Bid Requests', index=False)
+try:
+    logging.info("Authenticating with SharePoint...")
+    ctx_auth = AuthenticationContext(sharepoint_url)
+    if ctx_auth.acquire_token_for_user(username, password):
+        ctx = ClientContext(sharepoint_url, ctx_auth)
+        response = File.open_binary(ctx, relative_url)
 
-print(f"Data saved to {output_file}")
+        with open("temp_bid_calendar.xlsx", "wb") as local_file:
+            local_file.write(response.content)
+
+        # Load existing Excel file
+        logging.info("Loading existing Excel file...")
+        existing_df = pd.read_excel("temp_bid_calendar.xlsx", sheet_name="Bid Requests")
+
+        # Merge new data with existing data
+        updated_df = pd.concat([existing_df, consolidated_data], ignore_index=True)
+
+        # Save updated data to the Excel file
+        updated_df.to_excel("temp_bid_calendar.xlsx", index=False, sheet_name="Bid Requests")
+
+        # Upload the updated file back to SharePoint
+        logging.info("Uploading updated file back to SharePoint...")
+        with open("temp_bid_calendar.xlsx", "rb") as local_file:
+            target_file = File.save_binary(ctx, relative_url, local_file)
+
+        logging.info("Data successfully saved to

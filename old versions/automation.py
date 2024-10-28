@@ -1,22 +1,39 @@
 import spacy
 import win32com.client
-import re
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
+from dateutil import parser
 import random
-from fuzzywuzzy import fuzz
+import torch.utils._pytree as pytree
+import torch
 
-# Date regex patterns for "Month DD, YYYY" and "MM/DD/YYYY"
-date_patterns = [
-    r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2}, \d{4}\b",  # "Month DD, YYYY"
-    r"\b\d{1,2}/\d{1,2}/\d{4}\b"  # "MM/DD/YYYY"
-]
+# Try to load the Transformer-based NER model or create a new one
+try:
+    nlp = spacy.load("./trained_ner_model")  # Load Transformer model
+    print("Loaded saved NER Model.")
+except:
+    nlp = spacy.blank("en")  # Start with a blank model if no model exists
+    print("No existing model found, starting fresh.")
 
-# Load the trained NER model
-nlp = spacy.load("./trained_ner_model")
-print("Loaded NER Model...")
+# Add the NER pipeline if it doesn't exist
+if "ner" not in nlp.pipe_names:
+    ner = nlp.add_pipe("ner")
+else:
+    ner = nlp.get_pipe("ner")
 
-# Connect to Outlook and get the namespace
+# Add custom labels if not already present
+labels = ["PROJECT_NAME", "CONTRACTOR", "BID_DUE_DATE"]
+for label in labels:
+    if label not in ner.labels:
+        ner.add_label(label)
+
+# **Initialize the NER model**
+try:
+    nlp.initialize()  # Make sure to call initialize() here
+except Exception as e:
+    print(f"Failed to initialize the model: {e}")
+
+# Connect to Outlook
 outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
 
 # Function to recursively find folders containing the keyword "Bid"
@@ -34,62 +51,56 @@ def find_bid_folders(folder, folder_path=""):
     
     return bid_folders
 
-# Function to extract dates using regex patterns
-def extract_dates_with_regex(email_body):
-    for pattern in date_patterns:
-        match = re.search(pattern, email_body)
-        if match:
-            return match.group()
-    return None  # No date found
+# Validate dates using dateutil.parser
+def validate_date(entity):
+    try:
+        parsed_date = parser.parse(entity, fuzzy=False)
+        return True  # If date is valid
+    except ValueError:
+        return False  # If not a valid date
 
 # Function to get model predictions for project name, contractor, and bid due date
-def get_model_predictions(email_body):
-    doc = nlp(email_body)
+def get_model_predictions(text, confidence_threshold=0.75):
+    doc = nlp(text)
     project_name = None
     contractor = None
     bid_due_date = None
-    
-    # Extract the model's predictions for each entity
+
+    # Extract the model's predictions for each entity with confidence scoring
     for ent in doc.ents:
-        if ent.label_ == "PROJECT_NAME":
+        confidence = get_confidence(ent)
+        if ent.label_ == "PROJECT_NAME" and confidence >= confidence_threshold:
             project_name = ent.text
-        elif ent.label_ == "CONTRACTOR":
+        elif ent.label_ == "CONTRACTOR" and confidence >= confidence_threshold:
             contractor = ent.text
-        elif ent.label_ == "BID_DUE_DATE":
-            bid_due_date = ent.text
-    
-    # Use regex as a fallback if the model doesn't extract the bid due date
-    if not bid_due_date:
-        bid_due_date = extract_dates_with_regex(email_body)
-    
+        elif ent.label_ == "BID_DUE_DATE" and confidence >= confidence_threshold:
+            if validate_date(ent.text):
+                bid_due_date = ent.text
+
     return project_name, contractor, bid_due_date
 
-# Function to assign an orange category to an email
+# Get confidence score for entities
+def get_confidence(entity):
+    return entity.kb_id_ if entity.kb_id_ else 0.0
+
+# Active learning workflow for low-confidence predictions (Verbose Training Mode)
+def active_learning_correction(entity_type, prediction, message):
+    print(f"Low-confidence prediction for {entity_type}: '{prediction}'")
+    message.Display()  # Opens the email in Outlook for easier review
+    corrected_value = input(f"Please confirm or correct the {entity_type} (press Enter to confirm '{prediction}'): ")
+    return corrected_value if corrected_value else prediction
+
+# Assign Orange Category to email in Outlook
 def assign_orange_category(message):
     try:
-        # Set the category to "Orange Category"
         message.Categories = "Orange Category"
         message.Save()  # Save the email after changing the category
         print("Category set to Orange for email:", message.Subject)
     except Exception as e:
         print(f"Failed to set category for email: {message.Subject}. Error: {e}")
 
-# Function to find project name using a backup method (matching the subject)
-def backup_project_name_from_subject(subject, known_project_names):
-    for project_name in known_project_names:
-        # Use fuzzy matching to compare the subject with known project names
-        if fuzz.partial_ratio(subject.lower(), project_name.lower()) > 60:  # Adjust threshold if needed, 80 was default
-            return f"*{project_name}"
-    return None
-
-# Function to pass subject line to the model as a last resort
-def extract_project_name_from_subject(subject):
-    print(f"Attempting to extract project name from subject: {subject}")
-    subject_doc = nlp(subject)
-    for ent in subject_doc.ents:
-        if ent.label_ == "PROJECT_NAME":
-            return ent.text
-    return None
+# Prompt user to enable Verbose Training Mode
+verbose_training_mode = input("Would you like to enable Verbose Training Mode? (y/n): ").strip().lower() == 'y'
 
 # Get emails from a selected folder
 bid_folders = []
@@ -108,24 +119,10 @@ if bid_folders:
     messages = selected_folder.Items
     print(f"Total emails in the selected folder: {len(messages)}")
 
-    # Ask the user if they want to filter by number of emails or days
-    filter_choice = input("Would you like to filter by number of emails or days? (Enter 'emails' or 'days'): ").strip().lower()
-
-    # Filter by the number of recent emails
-    if filter_choice == 'emails':
-        num_emails = int(input("How many recent emails would you like to process?: "))
-        # Instead of sorting all messages, we will iterate over the first num_emails
-        message_count = len(messages)
-        filtered_messages = []
-        for i in range(min(num_emails, message_count)):
-            filtered_messages.append(messages[i])
-        messages = filtered_messages
-    
-    # Filter by the number of days
-    elif filter_choice == 'days':
-        days = int(input("Enter the number of days for recent emails: "))
-        cutoff_date = datetime.now() - timedelta(days=days)
-        messages = [msg for msg in messages if msg.ReceivedTime >= cutoff_date]
+    # Ask for the number of most recent emails to process
+    num_emails = int(input("How many recent emails would you like to process?: "))
+    filtered_messages = [messages[i] for i in range(min(num_emails, len(messages)))]
+    messages = filtered_messages
 
     print(f"Processing {len(messages)} emails after filtering.")
 
@@ -141,17 +138,21 @@ for message in messages:
     try:
         body = message.Body
         subject = message.Subject
-        
+
+        # Combine subject and body for model predictions
+        combined_text = f"{subject}\n{body}"
+
         # AI/ML-based extraction of relevant information
-        project_name, contractor, bid_due_date = get_model_predictions(body)
+        project_name, contractor, bid_due_date = get_model_predictions(combined_text)
 
-        # Backup: If project name is not found, check the subject line against known project names
-        if not project_name:
-            project_name = backup_project_name_from_subject(subject, known_project_names)
-
-        # Final Backup: If still no project name, use the model on the subject line
-        if not project_name:
-            project_name = extract_project_name_from_subject(subject)
+        # Active learning: Check predictions in verbose training mode
+        if verbose_training_mode:
+            if not project_name:
+                project_name = active_learning_correction("Project Name", project_name, message)
+            if not contractor:
+                contractor = active_learning_correction("Contractor", contractor, message)
+            if not bid_due_date:
+                bid_due_date = active_learning_correction("Bid Due Date", bid_due_date, message)
 
         # Add the project name to the known list if extracted successfully
         if project_name:
@@ -173,10 +174,10 @@ for message in messages:
     except Exception as e:
         print(f"Failed to process email: {e}")
 
-# Convert 'General Contractors' from list to string for proper handling
+# Convert email data into a DataFrame
 df = pd.DataFrame(email_data)
 
-# Show gathered data
+# Show the extracted data
 print(df.head())
 
 # Save the updated data to an Excel file
@@ -185,3 +186,37 @@ with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
     df.to_excel(writer, sheet_name='Bid Requests', index=False)
 
 print(f"Data saved to {output_file}")
+
+# Save the model after corrections
+if verbose_training_mode:
+    nlp.to_disk("./trained_ner_model")
+    print("Model training completed and saved to disk after corrections.")
+
+# **Deprecation Warning Updates**
+# Update deprecated calls
+pytree.register_pytree_node = getattr(pytree, 'register_pytree_node', pytree._register_pytree_node)
+print("Using updated register_pytree_node method.")
+
+# Set torch load with weights_only=True to avoid potential security issues
+def load_weights_safe(filelike, map_location):
+    return torch.load(filelike, map_location=map_location, weights_only=True)
+
+# Update torch.amp.autocast to the new format
+def autocast(device, *args, **kwargs):
+    return torch.amp.autocast(device, *args, **kwargs)
+print("Updated deprecated torch.cuda.amp.autocast to torch.amp.autocast.")
+
+# Warning fixes for AttributeRuler and Lemmatizer
+from spacy.pipeline import AttributeRuler, Lemmatizer
+
+if "attribute_ruler" not in nlp.pipe_names:
+    attribute_ruler = nlp.add_pipe("attribute_ruler")
+else:
+    attribute_ruler = nlp.get_pipe("attribute_ruler")
+
+if "lemmatizer" not in nlp.pipe_names:
+    lemmatizer = nlp.add_pipe("lemmatizer", after="attribute_ruler")
+else:
+    lemmatizer = nlp.get_pipe("lemmatizer")
+
+print("Initialized AttributeRuler and Lemmatizer to resolve warnings.")
