@@ -144,6 +144,12 @@ for message in messages:
             "Contractor": contractor,
             "Bid Due Date": bid_due_date if bid_due_date != "Not specified" else ""
         })
+
+        # Mark email with Orange category
+        message.Categories = "Orange Category"
+        message.Save()
+        logging.info("Marked email with subject '%s' as Orange category.", message.Subject)
+    
     except Exception as e:
         logging.error("Failed to process email with subject '%s': %s", message.Subject, e)
 
@@ -180,39 +186,9 @@ def manual_feedback(consolidated_df):
 # Apply manual feedback for duplicate consolidation
 consolidated_data = manual_feedback(consolidated_data)
 
-# SharePoint Integration - Save to existing SharePoint Excel file
-from office365.runtime.auth.authentication_context import AuthenticationContext
-from office365.sharepoint.client_context import ClientContext
-from office365.sharepoint.files.file import File
-
-sharepoint_url = "https://mehrer.sharepoint.com/sites/MehrerDrywallOffice"
-relative_url = "/sites/MehrerDrywallOffice/Shared Documents/Bid Calendar.xlsx"
-username = "Nolan@mehrer.com"
-password = "Nus74203"
-
-try:
-    logging.info("Authenticating with SharePoint...")
-    ctx_auth = AuthenticationContext(sharepoint_url)
-    if ctx_auth.acquire_token_for_user(username, password):
-        ctx = ClientContext(sharepoint_url, ctx_auth)
-        response = File.open_binary(ctx, relative_url)
-
-        with open("temp_bid_calendar.xlsx", "wb") as local_file:
-            local_file.write(response.content)
-
-        # Load existing Excel file
-        logging.info("Loading existing Excel file...")
-        existing_df = pd.read_excel("temp_bid_calendar.xlsx", sheet_name="Bid Requests")
-
-        # Merge new data with existing data
-        updated_df = pd.concat([existing_df, consolidated_data], ignore_index=True)
-
-        # Save updated data to the Excel file
-        updated_df.to_excel("temp_bid_calendar.xlsx", index=False, sheet_name="Bid Requests")
-
-        # Upload the updated file back to SharePoint
-        logging.info("Uploading updated file back to SharePoint...")
-        with open("temp_bid_calendar.xlsx", "rb") as local_file:
-            target_file = File.save_binary(ctx, relative_url, local_file)
-
-        logging.info("Data successfully saved to
+# Save to Excel file
+output_file = "bid_requests_calendar.xlsx"
+logging.info("Saving data to Excel file: %s", output_file)
+with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+    consolidated_data.to_excel(writer, sheet_name='Bid Requests', index=False)
+logging.info("Data successfully saved to %s", output_file)
