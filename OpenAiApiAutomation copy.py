@@ -110,13 +110,8 @@ if bid_folders:
     logging.info("Total emails in the selected folder: %d", len(messages))
 
     # Ask for the number of most recent emails to process
-    user_input = input("How many recent emails would you like to process? (e.g., '15' or '15,200'): ")
-    if "," in user_input:
-        num_emails, start_index = map(int, user_input.split(","))
-    else:
-        num_emails, start_index = int(user_input), 0
-    
-    filtered_messages = [messages[i] for i in range(start_index, min(start_index + num_emails, len(messages)))]
+    num_emails = int(input("How many recent emails would you like to process?: "))
+    filtered_messages = [messages[i] for i in range(min(num_emails, len(messages)))]
     messages = filtered_messages
 
     logging.info("Processing %d emails after filtering.", len(messages))
@@ -149,6 +144,12 @@ for message in messages:
             "Contractor": contractor,
             "Bid Due Date": bid_due_date if bid_due_date != "Not specified" else ""
         })
+
+        # Mark email with Orange category
+        message.Categories = "Orange Category"
+        message.Save()
+        logging.info("Marked email with subject '%s' as Orange category.", message.Subject)
+    
     except Exception as e:
         logging.error("Failed to process email with subject '%s': %s", message.Subject, e)
 
@@ -191,12 +192,3 @@ logging.info("Saving data to Excel file: %s", output_file)
 with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
     consolidated_data.to_excel(writer, sheet_name='Bid Requests', index=False)
 logging.info("Data successfully saved to %s", output_file)
-
-# Mark processed emails with Orange Category
-for message in messages:
-    try:
-        message.Categories = "Orange Category"
-        message.Save()
-        logging.info("Marked email with subject '%s' as processed (Orange Category)", message.Subject)
-    except Exception as e:
-        logging.error("Failed to mark email with subject '%s' as processed: %s", message.Subject, e)
