@@ -26,5 +26,41 @@
     "Sumner Operation Facility": {
         "Contractor": "Absher Construction Company",
         "Bid Due Date": "11/21/24"
+    },
+    "Barnes & Noble": {
+        "Contractor": "Englewood Construction, Inc., Hardesty + Associates",
+        "Bid Due Date": "12/03/24"
+    },
+    "Carillon": {
+        "Contractor": "Deacon Construction, LLC",
+        "Bid Due Date": "01/01/11**"
+    },
+    "Early Childhood Center at Two Rivers School": {
+        "Contractor": "Mehrer Drywall Inc.",
+        "Bid Due Date": "12/02/24"
+    },
+    "Jackson Elementary School": {
+        "Contractor": "Mehrer",
+        "Bid Due Date": "01/01/11**"
+    },
+    "Lower Columbia College Batting and Storage Facility": {
+        "Contractor": "Pivotal Construction",
+        "Bid Due Date": "12/16/24"
+    },
+    "PenMet Parks Admin HQ Construction Corrections Project": {
+        "Contractor": "Pivotal Construction",
+        "Bid Due Date": "12/16/24"
+    },
+    "SWSD Facilities Modifications and Upgrades": {
+        "Contractor": "Absher Construction Company",
+        "Bid Due Date": "01/01/11**"
+    },
+    "Sandberg Building Conversion": {
+        "Contractor": "Colvos Construction",
+        "Bid Due Date": "12/10/24"
+    },
+    "SeaTac 3rd Floor GT Booth Enhancements": {
+        "Contractor": "JTM Construction, Inc.",
+        "Bid Due Date": "01/01/11**"
     }
 }
