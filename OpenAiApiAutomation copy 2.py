@@ -35,18 +35,18 @@ def extract_email_info(subject, body):
     try:
         logging.info("Extracting information from email with subject: %s", subject)
         response = openai.ChatCompletion.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are an assistant extracting project information from emails."},
-                {"role": "user", "content": f"Extract the project name, contractor, bid due date, job walk information (if available), and a brief project description (highlight union or prevailing wage if mentioned) from the following email:\n\nEmail Example:\nSubject: {subject}\nBody: {body}\n\nThe format of the response should be:\nProject Name: ...\nContractor: ...\nBid Due Date: ...\nJob Walk: ...\nDescription: ..."}
+                {"role": "user", "content": f"Extract the project name, contractor, and bid due date from the following email:\n\nEmail Example:\nSubject: {subject}\nBody: {body}\n\nThe format of the response should be:\nProject Name: ...\nContractor: ...\nBid Due Date: ..."}
             ],
-            max_tokens=500,
+            max_tokens=300,
             temperature=0.2
         )
 
         content = response.choices[0].message['content']
         lines = content.split('\n')
-        project_name, contractor, bid_due_date, job_walk, description = None, None, None, None, None
+        project_name, contractor, bid_due_date = None, None, None
 
         # Extract the relevant fields from the response
         for line in lines:
@@ -56,17 +56,13 @@ def extract_email_info(subject, body):
                 contractor = line.replace("Contractor:", "").strip()
             elif line.startswith("Bid Due Date:"):
                 bid_due_date = line.replace("Bid Due Date:", "").strip()
-            elif line.startswith("Job Walk:"):
-                job_walk = line.replace("Job Walk:", "").strip()
-            elif line.startswith("Description:"):
-                description = line.replace("Description:", "").strip()
 
-        logging.info("Extracted - Project Name: %s, Contractor: %s, Bid Due Date: %s, Job Walk: %s, Description: %s", project_name, contractor, bid_due_date, job_walk, description)
-        return project_name, contractor, bid_due_date, job_walk, description
+        logging.info("Extracted - Project Name: %s, Contractor: %s, Bid Due Date: %s", project_name, contractor, bid_due_date)
+        return project_name, contractor, bid_due_date
 
     except Exception as e:
         logging.error(f"Failed to process email: {e}")
-        return None, None, None, None, None
+        return None, None, None
 
 # Function to normalize dates to mm/dd/yy format
 def normalize_date(date_str):
@@ -121,9 +117,9 @@ if bid_folders:
         num_emails, start_index = int(user_input), 0
     
     filtered_messages = [messages[i] for i in range(start_index, min(start_index + num_emails, len(messages)))]
-
-    logging.info("Processing %d emails after filtering.", len(filtered_messages))
     messages = filtered_messages
+
+    logging.info("Processing %d emails after filtering.", len(messages))
 
 else:
     logging.warning("No folders with 'Bid' in the name were found.")
@@ -136,7 +132,7 @@ for message in messages:
         logging.info("Processing email with subject: %s", message.Subject)
         subject = message.Subject
         body = message.Body
-        project_name, contractor, bid_due_date, job_walk, description = extract_email_info(subject, body)
+        project_name, contractor, bid_due_date = extract_email_info(subject, body)
 
         # Normalize bid due date
         bid_due_date = normalize_date(bid_due_date) if bid_due_date else "01/01/11**"
@@ -146,36 +142,48 @@ for message in messages:
             corrected_info = corrections[project_name]
             contractor = corrected_info.get("Contractor", contractor)
             bid_due_date = corrected_info.get("Bid Due Date", bid_due_date)
-            
-        # Mark email with Orange category
-        message.Categories = "Orange Category"
-        message.Save()
-        logging.info("Marked email with subject '%s' as Orange Category.", message.Subject)    
 
         # Add extracted information to email data list
         email_data.append({
             "Project Name": project_name,
             "Contractor": contractor,
-            "Bid Due Date": bid_due_date if bid_due_date != "Not specified" else "",
-            "Job Walk": job_walk if job_walk else "",
-            "Description": description if description else ""
+            "Bid Due Date": bid_due_date if bid_due_date != "Not specified" else ""
         })
     except Exception as e:
         logging.error("Failed to process email with subject '%s': %s", message.Subject, e)
 
 # Convert to DataFrame
 email_df = pd.DataFrame(email_data)
+email_df["Contractor"] = email_df["Contractor"].apply(lambda x: x if x else "Not specified")
 
 # Consolidate identical projects and list unique contractors
 consolidated_data = (
     email_df.groupby("Project Name", as_index=False)
     .agg({
         "Bid Due Date": "first",
-        "Contractor": lambda x: ", ".join(sorted(set(filter(None, [c.strip() for c in x])))),
-        "Job Walk": "first",
-        "Description": "first"
+        "Contractor": lambda x: ", ".join(sorted(set(filter(None, [c.strip() for c in x]))))
     })
 )
+
+# Function to manually review potential project duplicates
+def manual_feedback(consolidated_df):
+    reviewed_projects = []
+    for idx, row in consolidated_df.iterrows():
+        potential_duplicates = consolidated_df[consolidated_df["Project Name"].str.contains(row["Project Name"], case=False, na=False)]
+        if len(potential_duplicates) > 1:
+            print(f"Potential duplicates found for project: {row['Project Name']}")
+            for _, duplicate in potential_duplicates.iterrows():
+                print(f"- {duplicate['Project Name']}")
+            keep = input("Which project name would you like to keep? (Leave blank to keep the original): ")
+            if keep:
+                row["Project Name"] = keep
+                corrections[row["Project Name"]] = {"Contractor": row["Contractor"], "Bid Due Date": row["Bid Due Date"]}
+        reviewed_projects.append(row)
+    save_corrections(corrections)
+    return pd.DataFrame(reviewed_projects)
+
+# Apply manual feedback for duplicate consolidation
+consolidated_data = manual_feedback(consolidated_data)
 
 # Save to Excel file
 output_file = "bid_requests_calendar.xlsx"
@@ -183,3 +191,12 @@ logging.info("Saving data to Excel file: %s", output_file)
 with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
     consolidated_data.to_excel(writer, sheet_name='Bid Requests', index=False)
 logging.info("Data successfully saved to %s", output_file)
+
+# Mark processed emails with Orange Category
+for message in messages:
+    try:
+        message.Categories = "Orange Category"
+        message.Save()
+        logging.info("Marked email with subject '%s' as processed (Orange Category)", message.Subject)
+    except Exception as e:
+        logging.error("Failed to mark email with subject '%s' as processed: %s", message.Subject, e)
